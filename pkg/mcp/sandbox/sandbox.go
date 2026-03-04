@@ -3,7 +3,6 @@ package sandbox
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 )
@@ -57,38 +56,6 @@ func (c *Cmd) Start() error {
 // cfg holds the LXC-specific options for this server.
 func NewCmd(ctx context.Context, cmd Command, cfg LXCConfig) (*Cmd, error) {
 	return NewLXCCmd(ctx, cmd, cfg)
-}
-
-// PipeOut copies output from r to stderr, prefixed with serverName.
-func PipeOut(ctx context.Context, r io.Reader, serverName string) {
-	buf := make([]byte, 4096)
-	var partial []byte
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			partial = append(partial, buf[:n]...)
-			for {
-				idx := -1
-				for i, b := range partial {
-					if b == '\n' {
-						idx = i
-						break
-					}
-				}
-				if idx < 0 {
-					break
-				}
-				_, _ = fmt.Fprintf(os.Stderr, "[%s] %s\n", serverName, string(partial[:idx]))
-				partial = partial[idx+1:]
-			}
-		}
-		if err != nil {
-			if len(partial) > 0 {
-				_, _ = fmt.Fprintf(os.Stderr, "[%s] %s\n", serverName, string(partial))
-			}
-			return
-		}
-	}
 }
 
 // allowedEnv is the minimal set of OS env vars passed to container processes.
