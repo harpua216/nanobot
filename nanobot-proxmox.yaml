@@ -1,10 +1,13 @@
 # nanobot-proxmox.yaml
 #
-# Example configuration for running nanobot on a Proxmox homelab with:
-#   - ROMED8-2T inference node  (88 GB VRAM, local LLM via Ollama/vLLM)
-#   - Precision 7910 Proxmox host  (ZFS pool "tank", LXC containers)
-#   - EliteDesk SFF controller node  (runs nanobot, 10 GbE to switch)
-#   - MikroTik switch + Nighthawk cable modem
+# Future configuration — use this once the Precision 7910 arrives.
+#
+# Hardware (when complete):
+#   ROMED8-2T        - Pop!_OS, Ollama/vLLM inference (88 GB VRAM)
+#   Precision 7910   - Proxmox host, ZFS pool "tank", LXC containers
+#   MikroTik         - switch + NAT gateway
+#
+# Until then, use nanobot-romed.yaml (everything on the ROMED).
 #
 # Design goals:
 #   - NO Docker / OCI containers — Proxmox LXC only
