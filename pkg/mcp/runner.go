@@ -35,7 +35,6 @@ func (r *Runner) newCommand(ctx context.Context, currentEnv map[string]string, r
 	var publishPorts []string
 	ports := config.Ports
 	if len(ports) == 0 {
-		// If no ports are specified, use the default port
 		ports = []string{"mcp"}
 	}
 	if currentEnv == nil {
@@ -65,7 +64,9 @@ func (r *Runner) newCommand(ctx context.Context, currentEnv map[string]string, r
 	config.BaseURL = envvar.ReplaceString(currentEnv, config.BaseURL)
 
 	command, args, env := envvar.ReplaceEnv(currentEnv, config.Command, config.Args, config.Env)
-	if !config.Sandboxed || command == "nanobot" {
+
+	// nanobot sub-processes and non-containerized servers run directly.
+	if !config.Containerized || command == "nanobot" {
 		if command == "nanobot" {
 			command = system.Bin()
 		}
@@ -107,29 +108,21 @@ func (r *Runner) newCommand(ctx context.Context, currentEnv map[string]string, r
 		Workdir:      envvar.ReplaceString(config.Env, config.Workdir),
 		Args:         args,
 		Env:          slices.Collect(maps.Keys(config.Env)),
-		BaseImage:    config.Image,
-		Dockerfile:   config.Dockerfile,
-		Source:       sandbox.Source(config.Source),
 	}
 
-	var cmd *sandbox.Cmd
-	var err error
-
-	if strings.EqualFold(config.SandboxType, "lxc") {
-		cmd, err = sandbox.NewLXCCmd(ctx, sandboxCmd, sandbox.LXCConfig{
-			Template:        config.LXC.Template,
-			Persistent:      config.LXC.Persistent,
-			VMID:            config.LXC.VMID,
-			StoragePool:     config.LXC.StoragePool,
-			Memory:          config.LXC.Memory,
-			CPUs:            config.LXC.CPUs,
-			ExtraBindMounts: config.LXC.ExtraBindMounts,
-		})
-	} else {
-		cmd, err = sandbox.NewCmd(ctx, sandboxCmd)
+	lxcCfg := sandbox.LXCConfig{
+		Template:        config.LXC.Template,
+		Persistent:      config.LXC.Persistent,
+		VMID:            config.LXC.VMID,
+		StoragePool:     config.LXC.StoragePool,
+		Memory:          config.LXC.Memory,
+		CPUs:            config.LXC.CPUs,
+		ExtraBindMounts: config.LXC.ExtraBindMounts,
 	}
+
+	cmd, err := sandbox.NewCmd(ctx, sandboxCmd, lxcCfg)
 	if err != nil {
-		return config, nil, fmt.Errorf("failed to create sandbox command: %w", err)
+		return config, nil, fmt.Errorf("failed to create LXC command: %w", err)
 	}
 
 	cmd.Env = append(cleanOSEnv(), env...)
@@ -143,13 +136,11 @@ var allowedEnv = map[string]bool{
 }
 
 func cleanOSEnv() []string {
-	// Clean up the environment variables to avoid issues with sandboxing
 	env := os.Environ()
 	cleanedEnv := make([]string, 0, len(allowedEnv))
 	for _, e := range env {
 		k, _, found := strings.Cut(e, "=")
 		if found && allowedEnv[k] {
-			// Only allow specific environment variables
 			cleanedEnv = append(cleanedEnv, e)
 		}
 	}
@@ -157,7 +148,6 @@ func cleanOSEnv() []string {
 }
 
 func (r *Runner) doRun(ctx context.Context, serverName string, config Server, cmd *sandbox.Cmd) (Server, error) {
-	// hold open stdin for the supervisor
 	_, err := cmd.StdinPipe()
 	if err != nil {
 		return config, fmt.Errorf("failed to get stdin pipe: %w", err)

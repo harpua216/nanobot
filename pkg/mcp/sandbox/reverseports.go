@@ -3,56 +3,52 @@ package sandbox
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"sync"
 
 	"github.com/nanobot-ai/nanobot/pkg/log"
 	"github.com/nanobot-ai/nanobot/pkg/reverseproxy"
 	"github.com/nanobot-ai/nanobot/pkg/supervise"
-	"github.com/nanobot-ai/nanobot/pkg/version"
 )
 
-func startReversePort(ctx context.Context, targetContainerName string, port int, cancel func()) error {
-	for range 10 {
-		if err := exec.Command("docker", "start", targetContainerName).Run(); err == nil {
-			break
-		}
-	}
-
+// startReversePort sets up a reverse-proxy tunnel for a port inside an LXC
+// container. The proxy listens on the host and forwards into the container via
+// its network namespace using nsenter(1). No Docker sidecar is required.
+//
+// containerNS is the path to the container's network namespace, e.g.
+// /proc/<pid>/ns/net or /run/lxc/ns/<name>/net. When empty the host netns is
+// used (works for ephemeral containers with lxc.net.0.type = none).
+func startReversePort(ctx context.Context, containerNS string, port int, cancel func()) error {
 	server, err := reverseproxy.NewTLSServer(port)
 	if err != nil {
-		return fmt.Errorf("failed to create reverse proxy server for port %d: %w", port, err)
+		return fmt.Errorf("reverse port %d: create TLS server: %w", port, err)
 	}
 
 	targetPort, err := server.Start(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to start reverse proxy server for port %d: %w", port, err)
+		return fmt.Errorf("reverse port %d: start TLS server: %w", port, err)
 	}
 
 	ca, err := server.GetCACertPEM()
 	if err != nil {
-		return fmt.Errorf("failed to get CA certificate for port %d: %w", port, err)
+		return fmt.Errorf("reverse port %d: get CA cert: %w", port, err)
 	}
 
 	cert, key, err := server.GenerateClientCert()
 	if err != nil {
-		return fmt.Errorf("failed to generate client certificate for port %d: %w", port, err)
+		return fmt.Errorf("reverse port %d: generate client cert: %w", port, err)
 	}
 
-	containerName := fmt.Sprintf("%s-%d", targetContainerName, port)
-	cmd := supervise.Cmd(ctx, "docker", "run", "--rm",
-		"--network", "container:"+targetContainerName,
-		"--name", containerName,
-		"-e", "LISTEN_PORT",
-		"-e", "TARGET_PORT",
-		"-e", "CA_CERT",
-		"-e", "CLIENT_CERT",
-		"-e", "CLIENT_KEY",
-		version.BaseImage,
-		"proxy",
-	)
-	cmd.Env = append(os.Environ(),
+	// Run the proxy helper inside the container's network namespace so it can
+	// reach the container's loopback. nsenter is available on any Linux host.
+	var nsenterArgs []string
+	if containerNS != "" {
+		nsenterArgs = append(nsenterArgs, "--net="+containerNS)
+	}
+	nsenterArgs = append(nsenterArgs, "--", "proxy")
+
+	label := fmt.Sprintf("reverseport-%d", port)
+	cmd := supervise.Cmd(ctx, "nsenter", nsenterArgs...)
+	cmd.Env = append(cleanOSEnv(),
 		fmt.Sprintf("LISTEN_PORT=%d", port),
 		fmt.Sprintf("TARGET_PORT=%d", targetPort),
 		fmt.Sprintf("CA_CERT=%s", ca),
@@ -60,43 +56,40 @@ func startReversePort(ctx context.Context, targetContainerName string, port int,
 		fmt.Sprintf("CLIENT_KEY=%s", key),
 	)
 
-	// just hold open stdin for supervisor
 	_, err = cmd.StdinPipe()
 	if err != nil {
-		return fmt.Errorf("failed to get stdin pipe for reverse proxy container for port %d: %w", port, err)
+		return fmt.Errorf("reverse port %d: stdin pipe: %w", port, err)
 	}
-
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("failed to get stdout pipe for reverse proxy container for port %d: %w", port, err)
+		return fmt.Errorf("reverse port %d: stdout pipe: %w", port, err)
 	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("failed to get stderr pipe for reverse proxy container for port %d: %w", port, err)
+		return fmt.Errorf("reverse port %d: stderr pipe: %w", port, err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start reverse proxy container for port %d: %w", port, err)
+		return fmt.Errorf("reverse port %d: start: %w", port, err)
 	}
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		PipeOut(ctx, stdoutPipe, containerName)
+		PipeOut(ctx, stdoutPipe, label)
 	}()
 	go func() {
 		defer wg.Done()
-		PipeOut(ctx, stderrPipe, containerName)
+		PipeOut(ctx, stderrPipe, label)
 	}()
 	go func() {
-		defer func() {
-			cancel()
-		}()
 		wg.Wait()
 		if err := cmd.Wait(); err != nil {
-			log.Errorf(ctx, "Reverse proxy container for port %d exited with error: %v\n", port, err)
+			log.Errorf(ctx, "reverse port %d exited with error: %v", port, err)
 		}
+		cancel()
 	}()
+
 	return nil
 }

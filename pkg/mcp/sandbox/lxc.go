@@ -262,9 +262,11 @@ func newPCTCmd(ctx context.Context, cmd Command, cfg LXCConfig) (*Cmd, error) {
 		Cmd:    execCmd,
 		cancel: cancel,
 		postStart: func() error {
-			// Set up reverse ports if needed.
+			// Set up reverse ports via nsenter into the container's netns.
+			// /run/lxc/ns/<name>/net is created by pct on Proxmox.
+			containerNS := fmt.Sprintf("/run/lxc/ns/%s/net", containerName)
 			for _, port := range cmd.ReversePorts {
-				if err := startReversePort(ctx, containerName, port, cancel); err != nil {
+				if err := startReversePort(ctx, containerNS, port, cancel); err != nil {
 					return fmt.Errorf("lxc reverse port %d: %w", port, err)
 				}
 			}
