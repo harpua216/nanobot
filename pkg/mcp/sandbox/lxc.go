@@ -1,23 +1,37 @@
 package sandbox
 
-// lxc.go - Proxmox LXC sandbox for nanobot MCP servers.
+// lxc.go - LXC sandbox for nanobot MCP servers (no Docker required).
 //
-// This replaces Docker-based sandboxing with Linux Containers (LXC) as
-// managed by Proxmox.  Two execution modes are supported:
+// Works on any system with the lxc userspace tools installed:
 //
-//  1. Ephemeral mode (default): uses lxc-execute(1) to run a single command
-//     inside an unprivileged container rootfs and then exit.  Analogous to
-//     `docker run --rm`.  The rootfs is an existing LXC template directory.
+//   Pop!_OS / Ubuntu / Debian:
+//     sudo apt install lxc lxc-templates lxc-utils
 //
-//  2. Persistent mode: creates a named Proxmox LXC container via the pct(1)
-//     CLI, starts it, attaches the command with pct exec, and tears it down
-//     on context cancellation.  Use this for long-running MCP servers.
+//   Proxmox (has pct as well):
+//     apt install lxc lxc-templates   # pct is pre-installed
+//
+// Two execution modes:
+//
+//  1. Ephemeral mode (default): uses lxc-execute(1) — available on any
+//     Ubuntu/Debian host including Pop!_OS.  Runs a command inside an
+//     unprivileged container rootfs and exits.  Analogous to `docker run --rm`.
+//     The rootfs is a pre-extracted LXC template directory.
+//
+//  2. Persistent mode: creates and manages a named container via the pct(1)
+//     CLI.  pct is Proxmox-specific — only use this when nanobot itself is
+//     running ON the Proxmox host (Precision 7910), not on Pop!_OS.
 //
 // ZFS integration:
-//   When a *zfs.Manager is attached to the LXC command, the session's ZFS
-//   dataset is bind-mounted into the container at /mcp/context, giving the
-//   MCP server process direct access to ZFS-backed context memory.
+//   When a *zfs.Manager is active the session's ZFS dataset is bind-mounted
+//   into the container at /mcp/context, giving the MCP server process direct
+//   access to ZFS-backed context memory.
 //
+// Recommended setup when nanobot runs on Pop!_OS (ROMED8-2T):
+//   sudo apt install lxc lxc-templates zfsutils-linux
+//   sudo lxc-create -n base-ubuntu -t download -- -d ubuntu -r jammy -a amd64
+//   # (or use debootstrap to build a rootfs manually)
+//   zpool create tank <nvme-device>   # local ZFS pool on ROMED NVMe drives
+//   # Then use sandboxType: lxc with persistent: false  (ephemeral mode)
 // No Docker dependency is required when using this sandbox type.
 
 import (

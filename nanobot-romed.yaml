@@ -1,0 +1,132 @@
+# nanobot-romed.yaml
+#
+# Nanobot configuration for running ON the ROMED8-2T (Pop!_OS).
+#
+# Hardware:
+#   ROMED8-2T  - AMD EPYC, 88 GB VRAM, Pop!_OS 22.04  ← nanobot runs HERE
+#   7910       - Proxmox host, ZFS pool "tank", 10 GbE
+#   EliteDesk  - small controller / jump box
+#   MikroTik   - switch + NAT gateway
+#
+# The ROMED runs both nanobot and Ollama local inference.
+# LXC sandboxing uses standard lxc-utils (NOT pct/Proxmox-specific).
+# ZFS runs on the ROMED's own NVMe drives (local pool "tank").
+#
+# One-time setup on Pop!_OS:
+#   sudo apt install lxc lxc-templates lxc-utils zfsutils-linux
+#   sudo zpool create tank <nvme-device>        # e.g. /dev/nvme1n1
+#   sudo zfs create tank/nanobot
+#   sudo lxc-create -n ubuntu-base -t download -- \
+#       -d ubuntu -r jammy -a amd64             # build rootfs once
+#
+# Run:
+#   ./bin/nanobot run ./nanobot-romed.yaml
+
+# ---------------------------------------------------------------------------
+# ZFS-backed context memory (local NVMe pool on the ROMED)
+# ---------------------------------------------------------------------------
+zfs:
+  pool: tank
+  dataset: nanobot
+  mountBase: /mnt/nanobot
+  compression: lz4
+  sessionQuotaGb: 20          # EPYC has headroom; 20 GiB per session
+
+# ---------------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------------
+env:
+  LXC_ROOTFS:
+    description: "Path to the extracted LXC rootfs used for ephemeral sandboxes"
+    default: "/var/lib/lxc/ubuntu-base/rootfs"
+
+  PROXMOX_HOST:
+    description: "IP of the Precision 7910 Proxmox host (for reference only)"
+    default: "192.168.10.20"
+
+# ---------------------------------------------------------------------------
+# MCP Servers
+# ---------------------------------------------------------------------------
+mcpServers:
+
+  # ── Filesystem access — LXC ephemeral (Pop!_OS native lxc-execute) ────────
+  # MCP server that can read/write /mcp/context (the ZFS-backed session dataset).
+  # Uses ephemeral lxc-execute; no Docker, no pct.
+  filesystem:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/mcp/context"]
+    sandboxed: true
+    sandboxType: lxc
+    lxc:
+      # Point at the rootfs created by lxc-create above.
+      template: "${LXC_ROOTFS}"
+      # persistent: false (default) → uses lxc-execute (works on Pop!_OS)
+
+  # ── Web search — LXC ephemeral ────────────────────────────────────────────
+  web-search:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-brave-search"]
+    sandboxed: true
+    sandboxType: lxc
+    lxc:
+      template: "${LXC_ROOTFS}"
+      memory: 256
+      cpus: 1
+
+  # ── Python execution — LXC ephemeral ─────────────────────────────────────
+  # Runs arbitrary Python inside a container; ROMED has 256 cores to spare.
+  python-exec:
+    command: uvx
+    args: ["mcp-server-exec"]
+    sandboxed: true
+    sandboxType: lxc
+    lxc:
+      template: "${LXC_ROOTFS}"
+      memory: 4096
+      cpus: 8
+
+# ---------------------------------------------------------------------------
+# Agents
+# ---------------------------------------------------------------------------
+agents:
+
+  researcher:
+    name: Researcher
+    # Ollama runs locally on the ROMED — zero network hop.
+    model: "ollama/llama3.3:70b"
+    mcpServers:
+      - web-search
+      - filesystem
+    instructions: |
+      You are a research agent running locally on a ROMED8-2T workstation.
+      Save all notes to /mcp/context — the filesystem is ZFS-backed so
+      snapshots are taken automatically.  When starting a new topic, create
+      /mcp/context/<topic>/plan.md before searching.
+
+  coder:
+    name: Coder
+    model: "ollama/qwen2.5-coder:32b"
+    mcpServers:
+      - filesystem
+      - python-exec
+    instructions: |
+      You are a software engineer.  Your workspace is /mcp/context.
+      Always read existing code before editing.  Verify changes by
+      running tests in the python-exec sandbox.
+
+  orchestrator:
+    name: Orchestrator
+    model: "ollama/llama3.3:70b"
+    agents:
+      - researcher
+      - coder
+    instructions: |
+      Delegate research tasks to the researcher and coding tasks to the
+      coder.  Summarise results for the user.  When both agents need to
+      collaborate, share context through /mcp/context.
+
+publish:
+  entrypoint:
+    - orchestrator
+  name: "ROMED8-2T Agent Host"
+  description: "Local LLM agents with ZFS context memory, no Docker"
