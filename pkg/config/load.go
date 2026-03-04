@@ -109,10 +109,6 @@ func loadResource(ctx context.Context, configResource *resource, profiles ...str
 
 	last = rewriteCwd(last, targetCwd)
 
-	last, err = rewriteSourceReferences(last, configResource)
-	if err != nil {
-		return nil, "", fmt.Errorf("error rewriting source references: %w", err)
-	}
 
 	if len(last.Agents) == 1 && len(last.Publish.Entrypoint) == 0 {
 		for agentName := range last.Agents {
@@ -133,17 +129,6 @@ func rewriteCwd(cfg types.Config, cwd string) types.Config {
 	return cfg
 }
 
-func rewriteSourceReferences(cfg types.Config, resource *resource) (types.Config, error) {
-	for name, mcpServer := range cfg.MCPServers {
-		var err error
-		mcpServer.Source, err = resource.SourceRel(mcpServer.Source)
-		if err != nil {
-			return types.Config{}, fmt.Errorf("error resolving source for MCP server %s: %w", name, err)
-		}
-		cfg.MCPServers[name] = mcpServer
-	}
-	return cfg, nil
-}
 
 func toMap(cfg types.Config) (map[string]any, error) {
 	result := map[string]any{}

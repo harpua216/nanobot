@@ -131,26 +131,20 @@ type Server struct {
 	ShortName   string `json:"shortName,omitempty"`
 	Description string `json:"description,omitempty"`
 
-	Image        string            `json:"image,omitempty"`
-	Dockerfile   string            `json:"dockerfile,omitempty"`
-	Source       ServerSource      `json:"source,omitzero"`
-	Sandboxed    bool              `json:"sandboxed,omitempty"`
-	Env          map[string]string `json:"env,omitempty"`
-	Command      string            `json:"command,omitempty"`
-	Args         []string          `json:"args,omitempty"`
-	BaseURL      string            `json:"url,omitempty"`
-	Ports        []string          `json:"ports,omitempty"`
-	ReversePorts []int             `json:"reversePorts,omitempty"`
-	Cwd          string            `json:"cwd,omitempty"`
-	Workdir      string            `json:"workdir,omitempty"`
-	Headers      map[string]string `json:"headers,omitempty"`
+	// Containerized runs this MCP server inside an LXC container.
+	// Configure container options via the LXC field.
+	Containerized bool              `json:"containerized,omitempty"`
+	Env           map[string]string `json:"env,omitempty"`
+	Command       string            `json:"command,omitempty"`
+	Args          []string          `json:"args,omitempty"`
+	BaseURL       string            `json:"url,omitempty"`
+	Ports         []string          `json:"ports,omitempty"`
+	ReversePorts  []int             `json:"reversePorts,omitempty"`
+	Cwd           string            `json:"cwd,omitempty"`
+	Workdir       string            `json:"workdir,omitempty"`
+	Headers       map[string]string `json:"headers,omitempty"`
 
-	// SandboxType selects the container runtime when Sandboxed is true.
-	// Accepted values: "docker" (default), "lxc".
-	// Set to "lxc" to use Proxmox LXC containers instead of Docker.
-	SandboxType string `json:"sandboxType,omitempty"`
-
-	// LXC holds Proxmox LXC-specific configuration used when SandboxType is "lxc".
+	// LXC holds Proxmox LXC container options (used when Containerized is true).
 	LXC LXCServerConfig `json:"lxc,omitzero"`
 
 	// If providing tool overrides, any tools not included will be implicitly disabled.
@@ -206,28 +200,6 @@ type ToolOverride struct {
 	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
 }
 
-type ServerSource struct {
-	Repo      string `json:"repo,omitempty"`
-	Tag       string `json:"tag,omitempty"`
-	Commit    string `json:"commit,omitempty"`
-	Branch    string `json:"branch,omitempty"`
-	SubPath   string `json:"subPath,omitempty"`
-	Reference string `json:"reference,omitempty"`
-}
-
-func (s *ServerSource) UnmarshalJSON(data []byte) error {
-	if len(data) > 0 && data[0] == '"' {
-		// If the data is a string, treat it as a repo URL
-		var subPath string
-		if err := json.Unmarshal(data, &subPath); err != nil {
-			return fmt.Errorf("failed to unmarshal server source: %w", err)
-		}
-		s.SubPath = subPath
-		return nil
-	}
-	type Alias ServerSource
-	return json.Unmarshal(data, (*Alias)(s))
-}
 
 func toHandler(opts ClientOption) MessageHandler {
 	return MessageHandlerFunc(func(ctx context.Context, msg Message) {

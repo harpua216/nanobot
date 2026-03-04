@@ -61,17 +61,7 @@ func TestSchema(t *testing.T) {
 				"env1": "value1",
 				"env2": "value2"
 			},
-			"image": "an image",
-			"dockerfile": "Dockerfile content",
-			"source": {
-				"repo": ".",
-				"tag": "latest",
-				"commit": "abc123",
-				"branch": "main",
-				"subPath": "sub/path",
-				"reference": "v1.0.0"
-			},
-			"unsandboxed": true,
+			"containerized": true,
 			"ports": ["asdf", "fff"],
 			"reversePorts": [123,234],
 			"headers": {

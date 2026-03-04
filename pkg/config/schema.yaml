@@ -311,15 +311,11 @@ definitions:
           The URL of the MCP Server. This is used to connect to the MCP Server
           and access its resources. If a command is specified also, this URL should refer to localhost
           and should use a port from the port array so that Nanobot can randomly select a port to use.
-      image:
-        type: string
-        description: |
-          The base Docker image to use for the MCP Server.
-      unsandboxed:
+      containerized:
         type: boolean
         description: |
-          Whether the MCP Server should run in an unsandboxed mode. If true, the MCP Server
-          will not be isolated and can access the host system. Defaults to false if unset.
+          When true, runs this MCP server inside an LXC container on the Proxmox host.
+          Configure container options with the lxc field. Defaults to false (runs directly).
       workdir:
         type: string
         description: |
@@ -339,10 +335,6 @@ definitions:
           type: integer
         description: |
           A list of ports that will be exposed to the MCP Server from the host system.
-      dockerfile:
-        type: string
-        description: |
-          The source of the Dockerfile to use for building the MCP Server image.
       headers:
         $ref: "#/definitions/StringMap"
         description: |
@@ -369,39 +361,43 @@ definitions:
           or input schema, or to disable specific tools.
         additionalProperties:
           $ref: "#/definitions/ToolOverride"
-      source:
-        oneOf:
-          - type: string
+      lxc:
+        type: object
+        description: |
+          LXC container options for this MCP server. Only used when containerized is true.
+        properties:
+          template:
+            type: string
             description: |
-              The source code repository URL for the MCP Server. This is used to
-              clone the repository and build the MCP Server.
-          - type: object
+              LXC template name or rootfs path. On Proxmox this is typically a template
+              from /var/lib/vz/template/cache/, e.g. "ubuntu-22.04-standard_22.04-1_amd64".
+          persistent:
+            type: boolean
             description: |
-              The source code repository configuration for the MCP Server.
-            properties:
-              repo:
-                type: string
-                description: |
-                  The source code repository URL for the MCP Server.
-              branch:
-                type: string
-                description: |
-                  The branch of the source code repository to use. If not specified,
-                  the default branch will be used.
-              tag:
-                type: string
-                description: |
-                  The tag of the source code repository to use. If not specified,
-                  the latest commit will be used.
-              reference:
-                type: string
-                description: |
-                  A specific reference (commit, tag, or branch) to use from the source code repository.
-              subPath:
-                type: string
-                description: |
-                  A subpath within the repository to use as the MCP Server source.
-                  This is useful if the MCP Server is located in a subdirectory of the repository.
+              When true, creates a named Proxmox container via pct instead of an ephemeral
+              lxc-execute invocation. Use for long-lived MCP servers.
+          vmid:
+            type: integer
+            description: |
+              Proxmox container ID. Zero means auto-assign.
+          storagePool:
+            type: string
+            description: |
+              Proxmox storage pool for the container rootfs, e.g. "fast" or "local-zfs".
+          memory:
+            type: integer
+            description: |
+              Container memory limit in MiB. Defaults to 512.
+          cpus:
+            type: integer
+            description: |
+              Number of CPU cores available to the container. Defaults to 2.
+          extraBindMounts:
+            type: array
+            items:
+              type: string
+            description: |
+              Additional host:container bind-mount specs, e.g. ["/srv/data:/mcp/data"].
 
   StringOrObject:
     oneOf:

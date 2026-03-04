@@ -34,8 +34,8 @@
 #   # Create the nanobot container (adjust storage name if not local-zfs):
 #   pct create 200 local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst \
 #       --hostname nanobot \
-#       --storage local-zfs \
-#       --rootfs local-zfs:8 \
+#       --storage fast \
+#       --rootfs fast:8 \
 #       --memory 4096 \
 #       --cores 4 \
 #       --net0 name=eth0,bridge=vmbr0,ip=dhcp \
@@ -58,9 +58,9 @@
 # ZFS context memory (on EliteDesk's "tank" pool)
 # ---------------------------------------------------------------------------
 zfs:
-  pool: tank
+  pool: fast
   dataset: nanobot
-  # Default ZFS mountpoint will be /tank/nanobot/...
+  # Default ZFS mountpoint will be /fast/nanobot/...
   # If you want a custom path, uncomment:
   # mountBase: /mnt/nanobot
   compression: lz4
@@ -88,11 +88,10 @@ mcpServers:
   filesystem:
     command: npx
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/mcp/context"]
-    sandboxed: true
-    sandboxType: lxc
+    containerized: true
     lxc:
       template: "${LXC_TEMPLATE}"
-      storagePool: local-zfs
+      storagePool: fast
       persistent: true
       memory: 512
       cpus: 2
@@ -100,22 +99,20 @@ mcpServers:
   web-search:
     command: npx
     args: ["-y", "@modelcontextprotocol/server-brave-search"]
-    sandboxed: true
-    sandboxType: lxc
+    containerized: true
     lxc:
       template: "${LXC_TEMPLATE}"
-      storagePool: local-zfs
+      storagePool: fast
       memory: 256
       cpus: 1
 
   python-exec:
     command: uvx
     args: ["mcp-server-exec"]
-    sandboxed: true
-    sandboxType: lxc
+    containerized: true
     lxc:
       template: "${LXC_TEMPLATE}"
-      storagePool: local-zfs
+      storagePool: fast
       memory: 2048
       cpus: 4
 

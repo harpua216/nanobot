@@ -151,43 +151,6 @@ func (r *resource) Load(ctx context.Context) (result types.Config, _ error) {
 	return
 }
 
-func (r *resource) SourceRel(source mcp.ServerSource) (mcp.ServerSource, error) {
-	if source.Repo != "" || source.SubPath == "" {
-		return source, nil
-	}
-
-	switch r.resourceType {
-	case "http":
-		return mcp.ServerSource{}, fmt.Errorf("cannot resolve relative source for config loaded from HTTP: %s", r.url)
-	case "path":
-		cwd, err := r.Cwd()
-		if err != nil {
-			return mcp.ServerSource{}, fmt.Errorf("error getting current working directory for %s: %w", r, err)
-		}
-		cwd, err = filepath.Abs(cwd)
-		if err != nil {
-			return mcp.ServerSource{}, fmt.Errorf("error getting absolute path for %s: %w", cwd, err)
-		}
-		subPath := source.SubPath
-		for strings.HasPrefix(subPath, "../") {
-			subPath = strings.TrimPrefix(subPath, "../")
-			cwd = filepath.Dir(cwd)
-		}
-
-		source.SubPath = subPath
-		source.Repo = cwd
-		return source, nil
-	case "git":
-		source.Repo = fmt.Sprintf("https://%s/%s/%s.git", r.parts[0], r.parts[1], r.parts[2])
-		if source.Reference == "" && source.Tag == "" && source.Branch == "" && source.Commit == "" {
-			source.Reference = r.ref
-		}
-		source.SubPath = strings.Join(append(r.parts[3:], source.SubPath), "/")
-		return source, nil
-	}
-
-	return mcp.ServerSource{}, fmt.Errorf("unknown resource type: %s", r.resourceType)
-}
 
 func (r *resource) String() string {
 	if len(r.parts) > 0 {
