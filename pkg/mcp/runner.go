@@ -99,7 +99,7 @@ func (r *Runner) newCommand(ctx context.Context, currentEnv map[string]string, r
 		}
 	}
 
-	cmd, err := sandbox.NewCmd(ctx, sandbox.Command{
+	sandboxCmd := sandbox.Command{
 		PublishPorts: publishPorts,
 		ReversePorts: config.ReversePorts,
 		Roots:        rootPaths,
@@ -110,7 +110,24 @@ func (r *Runner) newCommand(ctx context.Context, currentEnv map[string]string, r
 		BaseImage:    config.Image,
 		Dockerfile:   config.Dockerfile,
 		Source:       sandbox.Source(config.Source),
-	})
+	}
+
+	var cmd *sandbox.Cmd
+	var err error
+
+	if strings.EqualFold(config.SandboxType, "lxc") {
+		cmd, err = sandbox.NewLXCCmd(ctx, sandboxCmd, sandbox.LXCConfig{
+			Template:        config.LXC.Template,
+			Persistent:      config.LXC.Persistent,
+			VMID:            config.LXC.VMID,
+			StoragePool:     config.LXC.StoragePool,
+			Memory:          config.LXC.Memory,
+			CPUs:            config.LXC.CPUs,
+			ExtraBindMounts: config.LXC.ExtraBindMounts,
+		})
+	} else {
+		cmd, err = sandbox.NewCmd(ctx, sandboxCmd)
+	}
 	if err != nil {
 		return config, nil, fmt.Errorf("failed to create sandbox command: %w", err)
 	}

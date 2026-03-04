@@ -80,6 +80,36 @@ type Config struct {
 	Hooks            mcp.Hooks             `json:"hooks,omitempty"`
 	WorkspaceID      string                `json:"workspaceId,omitempty"`
 	WorkspaceBaseURI string                `json:"workspaceBaseUri,omitempty"`
+
+	// ZFS configures the ZFS-backed context memory layer.
+	// When set, nanobot stores each session's state (SQLite database and
+	// resource files) inside a dedicated ZFS dataset, enabling snapshots,
+	// clones, rollbacks, and per-session quotas without a separate RAG system.
+	ZFS *ZFSConfig `json:"zfs,omitempty"`
+}
+
+// ZFSConfig describes the ZFS pool and dataset hierarchy used for
+// nanobot context-memory storage.
+type ZFSConfig struct {
+	// Pool is the ZFS pool name, e.g. "tank" or "rpool".
+	Pool string `json:"pool"`
+
+	// Dataset is the base dataset under Pool, e.g. "nanobot".
+	// The full hierarchy becomes <Pool>/<Dataset>/sessions/<id>, etc.
+	Dataset string `json:"dataset,omitempty"`
+
+	// MountBase is the filesystem path where ZFS datasets are mounted.
+	// If empty the default ZFS mountpoint hierarchy is used (/<pool>/<dataset>/…).
+	// Example: "/mnt/nanobot"
+	MountBase string `json:"mountBase,omitempty"`
+
+	// Compression is the ZFS compression algorithm for new datasets.
+	// Defaults to "lz4".
+	Compression string `json:"compression,omitempty"`
+
+	// SessionQuotaGB is the per-session storage quota in GiB.
+	// Zero means no quota is enforced.
+	SessionQuotaGB int `json:"sessionQuotaGb,omitempty"`
 }
 
 type ConfigFactory func(ctx context.Context, profiles string) (Config, error)

@@ -176,6 +176,7 @@ func (r *Run) Run(cmd *cobra.Command, args []string) (err error) {
 		OAuthRedirectURL:  "http://" + strings.Replace(r.ListenAddress, "127.0.0.1", "localhost", 1) + "/oauth/callback",
 		DSN:               r.n.DSN(),
 		AuditLogCollector: auditLogCollector,
+		ZFSConfig:         once.ZFS,
 	})
 	if err != nil {
 		return err

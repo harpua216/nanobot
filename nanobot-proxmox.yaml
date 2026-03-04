@@ -1,0 +1,184 @@
+# nanobot-proxmox.yaml
+#
+# Example configuration for running nanobot on a Proxmox homelab with:
+#   - ROMED8-2T inference node  (88 GB VRAM, local LLM via Ollama/vLLM)
+#   - Precision 7910 Proxmox host  (ZFS pool "tank", LXC containers)
+#   - EliteDesk SFF controller node  (runs nanobot, 10 GbE to switch)
+#   - MikroTik switch + Nighthawk cable modem
+#
+# Design goals:
+#   - NO Docker / OCI containers — Proxmox LXC only
+#   - ZFS datasets as context-memory store (no vector-DB / RAG pipeline)
+#   - Local LLM inference; Claude API only if a task requires it
+#   - Agents can reach the internet through the MikroTik NAT gateway
+#
+# Prerequisites on the Proxmox host (Precision 7910):
+#   apt install lxc lxc-templates zfsutils-linux
+#   zpool create tank <your-vdev>          # or use existing pool
+#   # Download an LXC template:
+#   pveam update && pveam download local ubuntu-22.04-standard_22.04-1_amd64.tar.zst
+#
+# Run nanobot:
+#   ./bin/nanobot run ./nanobot-proxmox.yaml
+
+# ---------------------------------------------------------------------------
+# ZFS-backed context memory
+# ---------------------------------------------------------------------------
+# Each agent session gets its own ZFS dataset:
+#   tank/nanobot/sessions/<sessionID>/session.db   ← SQLite for session state
+#   tank/nanobot/sessions/<sessionID>/resources/   ← agent resource files
+#
+# Agent persona templates live in:
+#   tank/nanobot/templates/<templateName>/          ← base persona state
+#
+# Create a persona snapshot:
+#   zfs snapshot tank/nanobot/templates/researcher@base
+# Clone it for a new session:
+#   zfs clone tank/nanobot/templates/researcher@base tank/nanobot/sessions/abc123
+#
+zfs:
+  pool: tank
+  dataset: nanobot
+  mountBase: /mnt/nanobot      # datasets mounted here; empty = use ZFS default
+  compression: lz4
+  sessionQuotaGb: 10           # hard cap per session; 0 = unlimited
+
+# ---------------------------------------------------------------------------
+# Environment variables
+# ---------------------------------------------------------------------------
+env:
+  INFERENCE_HOST:
+    description: "IP/hostname of the ROMED8-2T inference node"
+    default: "192.168.10.10"    # adjust to your 10 GbE address
+
+  PROXMOX_HOST:
+    description: "IP of the Precision 7910 Proxmox host"
+    default: "192.168.10.20"
+
+  LXC_TEMPLATE:
+    description: "Proxmox LXC template name (from pveam list local)"
+    default: "local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst"
+
+  LXC_STORAGE:
+    description: "Proxmox storage pool for container rootfs"
+    default: "local-zfs"
+
+# ---------------------------------------------------------------------------
+# MCP Servers
+# ---------------------------------------------------------------------------
+mcpServers:
+
+  # ── Local LLM bridge ──────────────────────────────────────────────────────
+  # Connects to Ollama (or vLLM / llama.cpp) running on the ROMED8-2T board.
+  # The inference node is reachable at INFERENCE_HOST:11434 over 10 GbE.
+  # No container needed — pure HTTP MCP server.
+  local-llm:
+    url: "http://${INFERENCE_HOST}:11434/mcp"
+
+  # ── Web search (LXC-sandboxed) ────────────────────────────────────────────
+  # An MCP server that performs web searches via the host's internet gateway.
+  # Runs in an LXC container on the Proxmox host so agent code is isolated
+  # from the nanobot process.  Uses ephemeral (lxc-execute) mode.
+  web-search:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-brave-search"]
+    sandboxed: true
+    sandboxType: lxc
+    lxc:
+      template: "${LXC_TEMPLATE}"
+      storagePool: "${LXC_STORAGE}"
+      memory: 256
+      cpus: 1
+
+  # ── Filesystem access (LXC-sandboxed, persistent) ─────────────────────────
+  # Lets agents read/write files in a dedicated ZFS dataset.
+  # Uses persistent Proxmox container mode so the server stays warm.
+  filesystem:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/mcp/context"]
+    sandboxed: true
+    sandboxType: lxc
+    lxc:
+      template: "${LXC_TEMPLATE}"
+      storagePool: "${LXC_STORAGE}"
+      persistent: true
+      memory: 512
+      cpus: 2
+      # The ZFS context mount is injected automatically by nanobot at runtime.
+      # Agents see their ZFS dataset at /mcp/context inside the container.
+
+  # ── Python code execution (LXC-sandboxed) ────────────────────────────────
+  # Runs arbitrary Python in an isolated LXC container.
+  # Great for data analysis, plotting, and general computation tasks.
+  python-exec:
+    command: uvx
+    args: ["mcp-server-exec"]
+    sandboxed: true
+    sandboxType: lxc
+    lxc:
+      template: "${LXC_TEMPLATE}"
+      storagePool: "${LXC_STORAGE}"
+      memory: 2048
+      cpus: 4
+
+# ---------------------------------------------------------------------------
+# Agents
+# ---------------------------------------------------------------------------
+agents:
+
+  # ── Researcher ─────────────────────────────────────────────────────────────
+  # General-purpose agent that can search the web, read files, and write
+  # results back to its ZFS-backed context dataset.
+  researcher:
+    name: Researcher
+    # Use the local ROMED8-2T LLM by default.
+    # Switch to "claude-sonnet-4-6" for tasks that need stronger reasoning.
+    model: "ollama/llama3.3:70b"
+    mcpServers:
+      - web-search
+      - filesystem
+    instructions: |
+      You are a meticulous research agent.  You have access to web search and
+      a persistent filesystem at /mcp/context.  Save all research notes,
+      intermediate findings, and final reports to /mcp/context so they
+      persist across sessions via ZFS snapshots.
+
+      When starting a new research project:
+        1. Create a subdirectory in /mcp/context/<topic>/.
+        2. Write a plan.md before doing any searches.
+        3. Snapshot your progress periodically (the system does this
+           automatically, but you can hint by writing a checkpoint file).
+
+  # ── Coder ─────────────────────────────────────────────────────────────────
+  coder:
+    name: Coder
+    model: "ollama/qwen2.5-coder:32b"
+    mcpServers:
+      - filesystem
+      - python-exec
+    instructions: |
+      You are an expert software engineer.  Your working directory is
+      /mcp/context.  Always read existing code before modifying it.
+      Run tests in the python-exec sandbox to verify correctness.
+
+  # ── Orchestrator ──────────────────────────────────────────────────────────
+  # Top-level agent that routes tasks to the specialist agents above.
+  orchestrator:
+    name: Orchestrator
+    model: "ollama/llama3.3:70b"
+    agents:
+      - researcher
+      - coder
+    instructions: |
+      You coordinate a team of specialist agents.  Break complex tasks into
+      sub-tasks and delegate them to the researcher or coder as appropriate.
+      Summarise results for the user.
+
+# ---------------------------------------------------------------------------
+# Publish
+# ---------------------------------------------------------------------------
+publish:
+  entrypoint:
+    - orchestrator
+  name: "Nanobot Proxmox"
+  description: "Nanobot agent host with ZFS context memory and LXC sandboxing"

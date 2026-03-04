@@ -10,6 +10,7 @@ import (
 	"github.com/nanobot-ai/nanobot/pkg/agents"
 	"github.com/nanobot-ai/nanobot/pkg/complete"
 	"github.com/nanobot-ai/nanobot/pkg/llm"
+	"github.com/nanobot-ai/nanobot/pkg/log"
 	"github.com/nanobot-ai/nanobot/pkg/mcp"
 	"github.com/nanobot-ai/nanobot/pkg/mcp/auditlogs"
 	"github.com/nanobot-ai/nanobot/pkg/sampling"
@@ -21,12 +22,14 @@ import (
 	"github.com/nanobot-ai/nanobot/pkg/sessiondata"
 	"github.com/nanobot-ai/nanobot/pkg/tools"
 	"github.com/nanobot-ai/nanobot/pkg/types"
+	"github.com/nanobot-ai/nanobot/pkg/zfs"
 )
 
 type Runtime struct {
 	*tools.Service
-	llmConfig llm.Config
-	opt       Options
+	llmConfig  llm.Config
+	opt        Options
+	ZFSManager *zfs.Manager
 }
 
 type Options struct {
@@ -42,6 +45,11 @@ type Options struct {
 	TokenExchangeClientSecret string
 	AuditLogCollector         *auditlogs.Collector
 	ConfigDir                 string
+
+	// ZFSConfig, when non-nil, activates ZFS-backed context memory.
+	// Session SQLite databases and resource files will be stored in
+	// ZFS datasets derived from this configuration.
+	ZFSConfig *types.ZFSConfig
 }
 
 func (o Options) Merge(other Options) (result Options) {
@@ -57,11 +65,30 @@ func (o Options) Merge(other Options) (result Options) {
 	result.TokenExchangeClientSecret = complete.Last(o.TokenExchangeClientSecret, other.TokenExchangeClientSecret)
 	result.AuditLogCollector = complete.Last(o.AuditLogCollector, other.AuditLogCollector)
 	result.ConfigDir = complete.Last(o.ConfigDir, other.ConfigDir)
+	result.ZFSConfig = complete.Last(o.ZFSConfig, other.ZFSConfig)
 	return
 }
 
 func NewRuntime(cfg llm.Config, opts ...Options) (*Runtime, error) {
 	opt := complete.Complete(opts...)
+
+	var zfsMgr *zfs.Manager
+	if opt.ZFSConfig != nil {
+		zfsMgr = zfs.NewManager(opt.ZFSConfig.Pool, opt.ZFSConfig.Dataset, opt.ZFSConfig.MountBase)
+		if opt.ZFSConfig.Compression != "" {
+			zfsMgr.Compression = opt.ZFSConfig.Compression
+		}
+		// Initialise base datasets.  This is a no-op if they already exist.
+		initCtx := context.Background()
+		if err := zfsMgr.Init(initCtx); err != nil {
+			log.Infof(initCtx, "zfs: failed to initialise datasets (continuing without ZFS): %v", err)
+			zfsMgr = nil
+		}
+		// If no explicit DSN was provided, use the ZFS-backed global database.
+		if opt.DSN == "" && zfsMgr != nil {
+			opt.DSN = "sqlite:" + zfsMgr.MountPath("nanobot.db")
+		}
+	}
 
 	if opt.TokenStorage == nil && opt.DSN != "" {
 		var err error
@@ -90,9 +117,10 @@ func NewRuntime(cfg llm.Config, opts ...Options) (*Runtime, error) {
 	registry.SetSampler(sampler)
 
 	r := &Runtime{
-		Service:   registry,
-		llmConfig: cfg,
-		opt:       opt,
+		Service:    registry,
+		llmConfig:  cfg,
+		opt:        opt,
+		ZFSManager: zfsMgr,
 	}
 
 	registry.AddServer("nanobot.meta", func(string) mcp.MessageHandler {

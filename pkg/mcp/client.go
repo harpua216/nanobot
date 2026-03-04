@@ -145,11 +145,47 @@ type Server struct {
 	Workdir      string            `json:"workdir,omitempty"`
 	Headers      map[string]string `json:"headers,omitempty"`
 
+	// SandboxType selects the container runtime when Sandboxed is true.
+	// Accepted values: "docker" (default), "lxc".
+	// Set to "lxc" to use Proxmox LXC containers instead of Docker.
+	SandboxType string `json:"sandboxType,omitempty"`
+
+	// LXC holds Proxmox LXC-specific configuration used when SandboxType is "lxc".
+	LXC LXCServerConfig `json:"lxc,omitzero"`
+
 	// If providing tool overrides, any tools not included will be implicitly disabled.
 	// If providing no tool overrides, all tools will be enabled.
 	ToolOverrides ToolOverrides `json:"toolOverrides,omitzero"`
 
 	Hooks Hooks `json:"hooks,omitzero"`
+}
+
+// LXCServerConfig holds per-MCP-server LXC container options.
+type LXCServerConfig struct {
+	// Template is the LXC/Proxmox template name or rootfs path.
+	// Example: "ubuntu-22.04-standard_22.04-1_amd64"
+	Template string `json:"template,omitempty"`
+
+	// Persistent creates a named Proxmox container (via pct) instead of an
+	// ephemeral lxc-execute invocation.  Better for long-lived MCP servers.
+	Persistent bool `json:"persistent,omitempty"`
+
+	// VMID is the Proxmox container ID (Persistent mode).  Zero = auto-assign.
+	VMID int `json:"vmid,omitempty"`
+
+	// StoragePool is the Proxmox storage pool for the container rootfs,
+	// e.g. "local-zfs" or "tank".
+	StoragePool string `json:"storagePool,omitempty"`
+
+	// Memory is the container memory limit in MiB (default 512).
+	Memory int `json:"memory,omitempty"`
+
+	// CPUs is the number of CPU cores available to the container (default 2).
+	CPUs int `json:"cpus,omitempty"`
+
+	// ExtraBindMounts is a list of host:container bind-mount specs
+	// (colon-separated), e.g. ["/srv/data:/mcp/data"].
+	ExtraBindMounts []string `json:"extraBindMounts,omitempty"`
 }
 
 func (s Server) MarshalJSON() ([]byte, error) {
