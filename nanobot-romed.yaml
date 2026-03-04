@@ -1,45 +1,26 @@
-# nanobot-romed.yaml
+# nanobot-romed.yaml  ← FALLBACK / STANDALONE
 #
-# Nanobot on the ROMED8-2T running Pop!_OS.
+# Use this only if you want to run nanobot directly on the ROMED8-2T
+# (Pop!_OS) without the EliteDesk Proxmox node.
 #
-# Current hardware:
-#   ROMED8-2T  - AMD EPYC, 88 GB VRAM, Pop!_OS 22.04  ← everything runs here
-#   MikroTik   - switch + NAT gateway
+# For the full homelab setup (EliteDesk + ROMED) use nanobot-proxmox.yaml.
 #
-# Pending:
-#   Precision 7910  - arriving soon, will become the Proxmox host
-#   (see nanobot-proxmox.yaml for the plan once it arrives)
-#
-# One-time setup:
+# One-time setup on Pop!_OS:
 #   sudo apt install lxc lxc-templates lxc-utils zfsutils-linux
-#   sudo zpool create tank <nvme-device>        # spare NVMe on the ROMED
-#   sudo lxc-create -n ubuntu-base -t download -- \
-#       -d ubuntu -r jammy -a amd64
-#
-# Run:
-#   ./bin/nanobot run ./nanobot-romed.yaml
+#   sudo lxc-create -n ubuntu-base -t download -- -d ubuntu -r jammy -a amd64
+#   sudo zpool create tank <nvme-device>   # spare NVMe on the ROMED
 
-# ---------------------------------------------------------------------------
-# ZFS context memory (local NVMe on the ROMED)
-# ---------------------------------------------------------------------------
 zfs:
   pool: tank
   dataset: nanobot
-  mountBase: /mnt/nanobot
   compression: lz4
   sessionQuotaGb: 20
 
-# ---------------------------------------------------------------------------
-# Environment
-# ---------------------------------------------------------------------------
 env:
   LXC_ROOTFS:
-    description: "Path to the extracted LXC rootfs (from lxc-create)"
+    description: "Path to the extracted LXC rootfs"
     default: "/var/lib/lxc/ubuntu-base/rootfs"
 
-# ---------------------------------------------------------------------------
-# MCP Servers
-# ---------------------------------------------------------------------------
 mcpServers:
 
   filesystem:
@@ -70,44 +51,26 @@ mcpServers:
       memory: 4096
       cpus: 8
 
-# ---------------------------------------------------------------------------
-# Agents
-# ---------------------------------------------------------------------------
 agents:
 
   researcher:
     name: Researcher
     model: "ollama/llama3.3:70b"
-    mcpServers:
-      - web-search
-      - filesystem
+    mcpServers: [web-search, filesystem]
     instructions: |
-      You are a research agent.  Save all notes and findings to
-      /mcp/context — it is ZFS-backed so state persists across sessions.
-      Create /mcp/context/<topic>/plan.md before starting any research.
+      Save all notes to /mcp/context (ZFS-backed).
 
   coder:
     name: Coder
     model: "ollama/qwen2.5-coder:32b"
-    mcpServers:
-      - filesystem
-      - python-exec
+    mcpServers: [filesystem, python-exec]
     instructions: |
-      You are a software engineer.  Workspace is /mcp/context.
-      Read existing code before editing.  Run tests via python-exec.
+      Workspace is /mcp/context. Read before editing.
 
   orchestrator:
     name: Orchestrator
     model: "ollama/llama3.3:70b"
-    agents:
-      - researcher
-      - coder
-    instructions: |
-      Delegate to researcher or coder as appropriate.
-      Agents share state through /mcp/context.
+    agents: [researcher, coder]
 
 publish:
-  entrypoint:
-    - orchestrator
-  name: "ROMED8-2T Agent Host"
-  description: "Local LLM agents with ZFS context memory, no Docker"
+  entrypoint: [orchestrator]
